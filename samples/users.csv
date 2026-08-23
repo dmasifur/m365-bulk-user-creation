@@ -1,0 +1,5 @@
+DisplayName,UserPrincipalName,GivenName,Surname,MailNickname,JobTitle,Department,OfficeLocation,MobilePhone,CompanyName,City,Country,UsageLocation,LicenseSkuPartNumber,Groups,ManagerUserPrincipalName
+Ada Lovelace,ada.lovelace@contoso.com,Ada,Lovelace,ada.lovelace,Principal Engineer,Engineering,London HQ,+44 20 7946 0101,Contoso Ltd,London,United Kingdom,GB,SPE_E3,All Staff;Engineering,grace.hopper@contoso.com
+Alan Turing,alan.turing@contoso.com,Alan,Turing,,Research Scientist,Engineering,London HQ,,Contoso Ltd,London,United Kingdom,GB,SPE_E3,All Staff;Engineering,grace.hopper@contoso.com
+Katherine Johnson,katherine.johnson@contoso.com,Katherine,Johnson,,Finance Analyst,Finance,,,Contoso Ltd,,,US,ENTERPRISEPACK,All Staff;Finance,
+Radia Perlman,radia.perlman@contoso.com,Radia,Perlman,,Network Architect,Engineering,,,Contoso Ltd,,,,,All Staff,
