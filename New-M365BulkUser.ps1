@@ -95,6 +95,59 @@ param(
 begin {
     Set-StrictMode -Version 3.0
     $ErrorActionPreference = 'Stop'
+
+    $script:RequiredColumns = @('DisplayName', 'UserPrincipalName')
+    $script:Results         = [System.Collections.Generic.List[pscustomobject]]::new()
+    $script:Pending         = [System.Collections.Generic.List[psobject]]::new()
+    $script:SkuCache        = @{}
+    $script:GroupCache      = @{}
+    $script:ManagerCache    = @{}
+    $script:VerifiedDomains = @()
+
+    function Get-PropertyValue {
+        <# Returns a trimmed property value, or $null when absent/blank. #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)][psobject]$InputObject,
+            [Parameter(Mandatory)][string]$Name
+        )
+
+        if (-not $InputObject.PSObject.Properties.Match($Name).Count) { return $null }
+        $value = [string]$InputObject.$Name
+        if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+        $value.Trim()
+    }
+
+    function New-RandomPassword {
+        <# Cryptographically random password with all four complexity classes. #>
+        [OutputType([string])]
+        param([Parameter(Mandatory)][ValidateRange(12, 64)][int]$Length)
+
+        # Ambiguous glyphs (O/0, l/1/I) omitted so passwords survive being read aloud.
+        $classes = @(
+            'ABCDEFGHJKLMNPQRSTUVWXYZ',
+            'abcdefghijkmnpqrstuvwxyz',
+            '23456789',
+            '!@#$%^&*-_=+?'
+        )
+        $all   = -join $classes
+        $chars = [System.Collections.Generic.List[char]]::new()
+
+        foreach ($class in $classes) {
+            $chars.Add($class[[System.Security.Cryptography.RandomNumberGenerator]::GetInt32($class.Length)])
+        }
+        while ($chars.Count -lt $Length) {
+            $chars.Add($all[[System.Security.Cryptography.RandomNumberGenerator]::GetInt32($all.Length)])
+        }
+
+        # Fisher-Yates, so the guaranteed class characters aren't always in front.
+        for ($i = $chars.Count - 1; $i -gt 0; $i--) {
+            $j = [System.Security.Cryptography.RandomNumberGenerator]::GetInt32($i + 1)
+            ($chars[$i], $chars[$j]) = ($chars[$j], $chars[$i])
+        }
+
+        -join $chars
+    }
 }
 
 process {
