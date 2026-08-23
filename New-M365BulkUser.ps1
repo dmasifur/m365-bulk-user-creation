@@ -148,6 +148,84 @@ begin {
 
         -join $chars
     }
+
+    function Resolve-SkuId {
+        <# Maps a SKU part number (e.g. SPE_E3) to its GUID, checking availability. #>
+        [OutputType([string])]
+        param([Parameter(Mandatory)][string]$SkuPartNumber)
+
+        $key = $SkuPartNumber.ToUpperInvariant()
+        if ($script:SkuCache.ContainsKey($key)) { return $script:SkuCache[$key] }
+
+        $sku = Get-MgSubscribedSku -All |
+            Where-Object { $_.SkuPartNumber -eq $SkuPartNumber } |
+            Select-Object -First 1
+
+        if (-not $sku) {
+            throw "License SKU '$SkuPartNumber' is not present in this tenant."
+        }
+
+        $available = $sku.PrepaidUnits.Enabled - $sku.ConsumedUnits
+        if ($available -le 0) {
+            Write-Warning "SKU '$SkuPartNumber' has no seats free ($($sku.ConsumedUnits)/$($sku.PrepaidUnits.Enabled) consumed). Assignment will fail."
+        }
+
+        $script:SkuCache[$key] = $sku.SkuId
+        $sku.SkuId
+    }
+
+    function Resolve-GroupId {
+        <# Maps a group display name to its object ID. Rejects dynamic groups. #>
+        [OutputType([string])]
+        param([Parameter(Mandatory)][string]$DisplayName)
+
+        $key = $DisplayName.ToUpperInvariant()
+        if ($script:GroupCache.ContainsKey($key)) { return $script:GroupCache[$key] }
+
+        $escaped = $DisplayName.Replace("'", "''")
+        $groups  = @(Get-MgGroup -Filter "displayName eq '$escaped'" -Property 'Id,DisplayName,GroupTypes' -All)
+
+        if ($groups.Count -eq 0) { throw "Group '$DisplayName' was not found." }
+        if ($groups.Count -gt 1) { throw "Group name '$DisplayName' is ambiguous ($($groups.Count) matches). Use the object ID instead." }
+
+        if ($groups[0].GroupTypes -contains 'DynamicMembership') {
+            throw "Group '$DisplayName' uses dynamic membership; members cannot be added directly."
+        }
+
+        $script:GroupCache[$key] = $groups[0].Id
+        $groups[0].Id
+    }
+
+    function Resolve-ManagerId {
+        [OutputType([string])]
+        param([Parameter(Mandatory)][string]$UserPrincipalName)
+
+        $key = $UserPrincipalName.ToUpperInvariant()
+        if ($script:ManagerCache.ContainsKey($key)) { return $script:ManagerCache[$key] }
+
+        try {
+            $manager = Get-MgUser -UserId $UserPrincipalName -Property 'Id' -ErrorAction Stop
+        }
+        catch {
+            throw "Manager '$UserPrincipalName' was not found in the tenant."
+        }
+
+        $script:ManagerCache[$key] = $manager.Id
+        $manager.Id
+    }
+
+    function Test-UserExists {
+        [OutputType([bool])]
+        param([Parameter(Mandatory)][string]$UserPrincipalName)
+
+        try {
+            $null = Get-MgUser -UserId $UserPrincipalName -Property 'Id' -ErrorAction Stop
+            $true
+        }
+        catch {
+            $false
+        }
+    }
 }
 
 process {
