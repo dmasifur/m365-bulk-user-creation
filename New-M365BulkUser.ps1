@@ -477,7 +477,12 @@ process {
         }
 
         $status = if ($problems.Count) { 'Partial' } else { 'Created' }
-        Add-Result -UserPrincipalName $target -Status $status -Actions $completed -Message ($problems -join ' | ')
+        $record = Add-Result -UserPrincipalName $target -Status $status -Actions $completed -Message ($problems -join ' | ')
+
+        if ($PSBoundParameters.ContainsKey('CredentialReportPath')) {
+            $record | Add-Member -NotePropertyName 'InitialPassword' -NotePropertyValue $password -PassThru |
+                Out-Null
+        }
 
         if ($problems.Count) {
             Write-Warning "$target created with $($problems.Count) follow-up failure(s). See the run log."
@@ -486,4 +491,25 @@ process {
 }
 
 end {
+    if ($script:Results.Count -eq 0) { return }
+
+    $script:Results |
+        Select-Object Timestamp, UserPrincipalName, Status, Actions, Message |
+        Export-Csv -LiteralPath $LogPath -NoTypeInformation -Encoding utf8
+    Write-Verbose "Run log written to '$LogPath'."
+
+    if ($PSBoundParameters.ContainsKey('CredentialReportPath')) {
+        $credentials = @($script:Results | Where-Object { $_.PSObject.Properties.Match('InitialPassword').Count })
+        if ($credentials.Count) {
+            $credentials |
+                Select-Object UserPrincipalName, InitialPassword |
+                Export-Csv -LiteralPath $CredentialReportPath -NoTypeInformation -Encoding utf8
+            Write-Warning "Credential report written to '$CredentialReportPath'. It contains plaintext passwords - distribute securely and delete it afterwards."
+        }
+    }
+
+    $summary = $script:Results | Group-Object Status | ForEach-Object { "$($_.Name)=$($_.Count)" }
+    Write-Verbose "Summary: $($summary -join ', ')"
+
+    $script:Results | Select-Object Timestamp, UserPrincipalName, Status, Actions, Message
 }
