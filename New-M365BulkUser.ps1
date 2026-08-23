@@ -227,6 +227,25 @@ begin {
         }
     }
 
+    function Add-Result {
+        param(
+            [Parameter(Mandatory)][string]$UserPrincipalName,
+            [Parameter(Mandatory)][ValidateSet('Created', 'Skipped', 'Failed', 'Partial', 'WhatIf')][string]$Status,
+            [string[]]$Actions = @(),
+            [string]$Message
+        )
+
+        $record = [pscustomobject]@{
+            Timestamp         = (Get-Date).ToString('s')
+            UserPrincipalName = $UserPrincipalName
+            Status            = $Status
+            Actions           = ($Actions -join '; ')
+            Message           = $Message
+        }
+        $script:Results.Add($record)
+        $record
+    }
+
     # --- Connect -----------------------------------------------------------
     $connectSplat = @{
         Scopes    = @('User.ReadWrite.All', 'GroupMember.ReadWrite.All', 'Organization.Read.All', 'Directory.Read.All')
@@ -251,6 +270,91 @@ begin {
 }
 
 process {
+    $rows = if ($PSCmdlet.ParameterSetName -eq 'FromCsv') {
+        Write-Verbose "Reading '$CsvPath'."
+        @(Import-Csv -LiteralPath $CsvPath)
+    }
+    else {
+        @($InputObject)
+    }
+
+    if ($rows.Count -eq 0) {
+        Write-Warning 'No input rows found; nothing to do.'
+        return
+    }
+
+    # --- Phase 1: pre-flight (read-only) ----------------------------------
+    $rowNumber = 1
+    foreach ($row in $rows) {
+        $rowNumber++
+        $upn = Get-PropertyValue -InputObject $row -Name 'UserPrincipalName'
+        $label = $upn ?? "row $rowNumber"
+
+        $missing = $script:RequiredColumns.Where({ -not (Get-PropertyValue -InputObject $row -Name $_) })
+        if ($missing) {
+            Add-Result -UserPrincipalName $label -Status 'Failed' -Message "Missing required value(s): $($missing -join ', ')."
+            continue
+        }
+
+        try {
+            if ($upn -notmatch '^[^@\s]+@[^@\s]+\.[^@\s]+$') {
+                throw "'$upn' is not a valid UPN."
+            }
+
+            if (-not $SkipDomainCheck) {
+                $suffix = $upn.Split('@')[-1]
+                if ($suffix -notin $script:VerifiedDomains) {
+                    throw "Domain '$suffix' is not a verified domain in this tenant."
+                }
+            }
+
+            if (Test-UserExists -UserPrincipalName $upn) {
+                Add-Result -UserPrincipalName $upn -Status 'Skipped' -Message 'Account already exists.'
+                continue
+            }
+
+            $usageLocation = Get-PropertyValue -InputObject $row -Name 'UsageLocation'
+            $skuPartNumber = Get-PropertyValue -InputObject $row -Name 'LicenseSkuPartNumber'
+            $managerUpn    = Get-PropertyValue -InputObject $row -Name 'ManagerUserPrincipalName'
+            $groupNames    = @()
+
+            $rawGroups = Get-PropertyValue -InputObject $row -Name 'Groups'
+            if ($rawGroups) {
+                $groupNames = @($rawGroups -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            }
+
+            if ($skuPartNumber -and -not $usageLocation) {
+                throw 'UsageLocation is required before a license can be assigned.'
+            }
+            if ($usageLocation -and $usageLocation -notmatch '^[A-Za-z]{2}$') {
+                throw "UsageLocation '$usageLocation' must be a two-letter ISO 3166-1 country code."
+            }
+
+            $skuId     = if ($skuPartNumber) { Resolve-SkuId -SkuPartNumber $skuPartNumber } else { $null }
+            $groupIds  = @(foreach ($name in $groupNames) { [pscustomobject]@{ Name = $name; Id = Resolve-GroupId -DisplayName $name } })
+            $managerId = if ($managerUpn) { Resolve-ManagerId -UserPrincipalName $managerUpn } else { $null }
+
+            $mailNickname = Get-PropertyValue -InputObject $row -Name 'MailNickname'
+            if (-not $mailNickname) { $mailNickname = $upn.Split('@')[0] }
+
+            $script:Pending.Add([pscustomobject]@{
+                Row           = $row
+                Upn           = $upn
+                MailNickname  = $mailNickname
+                UsageLocation = $usageLocation
+                SkuPartNumber = $skuPartNumber
+                SkuId         = $skuId
+                Groups        = $groupIds
+                ManagerUpn    = $managerUpn
+                ManagerId     = $managerId
+            })
+        }
+        catch {
+            Add-Result -UserPrincipalName $label -Status 'Failed' -Message $_.Exception.Message
+        }
+    }
+
+    Write-Verbose "Pre-flight complete: $($script:Pending.Count) row(s) ready, $(($script:Results | Where-Object Status -eq 'Failed').Count) rejected."
 }
 
 end {
