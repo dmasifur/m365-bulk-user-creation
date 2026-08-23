@@ -109,12 +109,23 @@ Describe 'New-RandomPassword' {
     }
 
     It 'excludes glyphs that are ambiguous when read aloud' {
+        # Case matters here: 'l' and 'O' are excluded while 'L' and 'o' are not,
+        # so the comparison has to be ordinal rather than -BeLike or -Match.
         $forbidden = '0', '1', 'I', 'O', 'l', 'o'
         $sample = -join (1..100 | ForEach-Object { New-RandomPassword -Length 32 })
 
         foreach ($char in $forbidden) {
-            $sample | Should -Not -BeLike "*$char*" -Because "'$char' is easily misheard"
+            $sample.IndexOf($char, [System.StringComparison]::Ordinal) |
+                Should -Be -1 -Because "'$char' is easily misheard"
         }
+    }
+
+    It 'keeps the unambiguous members of those glyph pairs' {
+        # 'L' and 'i' are legible in print, and dropping them would shrink the
+        # alphabet for no benefit.
+        $sample = -join (1..200 | ForEach-Object { New-RandomPassword -Length 32 })
+        $sample.IndexOf('L', [System.StringComparison]::Ordinal) | Should -BeGreaterThan -1
+        $sample.IndexOf('i', [System.StringComparison]::Ordinal) | Should -BeGreaterThan -1
     }
 
     It 'does not place the guaranteed class characters in a fixed order' {
@@ -184,50 +195,59 @@ Describe 'Add-Result' {
 }
 
 Describe 'Invoke-GraphWithRetry' {
+    BeforeAll {
+        # The wrapped scriptblock runs in a child scope, so a plain counter
+        # variable would be copied on write and stay at zero out here. A [ref]
+        # is mutated rather than reassigned, so the count survives.
+        function New-GraphError {
+            param([System.Net.HttpStatusCode]$StatusCode)
+            $response = [System.Net.Http.HttpResponseMessage]::new($StatusCode)
+            [Microsoft.PowerShell.Commands.HttpResponseException]::new("$StatusCode", $response)
+        }
+    }
+
     It 'returns the value of the wrapped call' {
         Invoke-GraphWithRetry { 'result' } | Should -Be 'result'
     }
 
     It 'calls the wrapped scriptblock exactly once when it succeeds' {
-        $calls = 0
-        $null = Invoke-GraphWithRetry { $script:calls = ++$calls; 'ok' }
-        $calls | Should -Be 1
+        $calls = [ref]0
+        Invoke-GraphWithRetry { $calls.Value++; 'ok' } | Should -Be 'ok'
+        $calls.Value | Should -Be 1
     }
 
     It 'rethrows a non-transient failure without retrying' {
-        $calls = 0
-        { Invoke-GraphWithRetry -MaxAttempts 4 -ScriptBlock { $calls++; throw 'Insufficient privileges' } } |
+        $calls = [ref]0
+        { Invoke-GraphWithRetry -MaxAttempts 4 -ScriptBlock { $calls.Value++; throw 'Insufficient privileges' } } |
             Should -Throw '*Insufficient privileges*'
 
-        $calls | Should -Be 1 -Because 'a permission error will not succeed on a retry'
+        $calls.Value | Should -Be 1 -Because 'a permission error will not succeed on a retry'
     }
 
     It 'retries a throttling response and gives up after MaxAttempts' {
-        $calls = 0
+        $calls = [ref]0
         $throttled = {
-            $calls++
-            $response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]::TooManyRequests)
-            throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('Too Many Requests', $response)
+            $calls.Value++
+            throw (New-GraphError -StatusCode ([System.Net.HttpStatusCode]::TooManyRequests))
         }
 
-        # MaxAttempts 2 keeps the single backoff to ~2 seconds.
+        # MaxAttempts 2 keeps this to a single ~2 second backoff.
         { Invoke-GraphWithRetry -MaxAttempts 2 -ScriptBlock $throttled } | Should -Throw
-        $calls | Should -Be 2
+        $calls.Value | Should -Be 2
     }
 
     It 'stops retrying as soon as the call succeeds' {
-        $calls = 0
+        $calls = [ref]0
         $flaky = {
-            $calls++
-            if ($calls -lt 2) {
-                $response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]::ServiceUnavailable)
-                throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('Service Unavailable', $response)
+            $calls.Value++
+            if ($calls.Value -lt 2) {
+                throw (New-GraphError -StatusCode ([System.Net.HttpStatusCode]::ServiceUnavailable))
             }
             'recovered'
         }
 
         Invoke-GraphWithRetry -MaxAttempts 4 -ScriptBlock $flaky | Should -Be 'recovered'
-        $calls | Should -Be 2
+        $calls.Value | Should -Be 2
     }
 }
 
