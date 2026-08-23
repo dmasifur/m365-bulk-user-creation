@@ -371,6 +371,7 @@ process {
 
         $password  = New-RandomPassword -Length $PasswordLength
         $completed = [System.Collections.Generic.List[string]]::new()
+        $problems  = [System.Collections.Generic.List[string]]::new()
 
         $body = @{
             AccountEnabled    = $true
@@ -412,7 +413,47 @@ process {
             continue
         }
 
-        Add-Result -UserPrincipalName $target -Status 'Created' -Actions $completed
+        if ($item.SkuId) {
+            try {
+                $null = Set-MgUserLicense -UserId $user.Id `
+                    -AddLicenses @(@{ SkuId = $item.SkuId }) `
+                    -RemoveLicenses @() `
+                    -ErrorAction Stop
+                $completed.Add("Licensed $($item.SkuPartNumber)")
+            }
+            catch {
+                $problems.Add("License '$($item.SkuPartNumber)': $($_.Exception.Message)")
+            }
+        }
+
+        foreach ($group in $item.Groups) {
+            try {
+                New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction Stop
+                $completed.Add("Added to '$($group.Name)'")
+            }
+            catch {
+                $problems.Add("Group '$($group.Name)': $($_.Exception.Message)")
+            }
+        }
+
+        if ($item.ManagerId) {
+            try {
+                Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{
+                    '@odata.id' = "https://graph.microsoft.com/v1.0/users/$($item.ManagerId)"
+                } -ErrorAction Stop
+                $completed.Add("Manager set to $($item.ManagerUpn)")
+            }
+            catch {
+                $problems.Add("Manager '$($item.ManagerUpn)': $($_.Exception.Message)")
+            }
+        }
+
+        $status = if ($problems.Count) { 'Partial' } else { 'Created' }
+        Add-Result -UserPrincipalName $target -Status $status -Actions $completed -Message ($problems -join ' | ')
+
+        if ($problems.Count) {
+            Write-Warning "$target created with $($problems.Count) follow-up failure(s). See the run log."
+        }
     }
 }
 
