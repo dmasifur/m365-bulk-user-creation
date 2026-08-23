@@ -1,0 +1,21 @@
+# Run artifacts produced by New-M365BulkUser.ps1
+BulkUserCreate_*.csv
+
+# Credential reports contain plaintext passwords and must never be committed.
+*creds*.csv
+*credential*.csv
+*Credential*.csv
+
+# PowerShell
+*.psd1.bak
+PowerShellGet/
+Modules/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
