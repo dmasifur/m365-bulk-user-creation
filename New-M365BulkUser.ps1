@@ -355,6 +355,65 @@ process {
     }
 
     Write-Verbose "Pre-flight complete: $($script:Pending.Count) row(s) ready, $(($script:Results | Where-Object Status -eq 'Failed').Count) rejected."
+
+    # --- Phase 2: provision ------------------------------------------------
+    foreach ($item in $script:Pending) {
+        $target = $item.Upn
+        $plan   = @('Create account')
+        if ($item.SkuPartNumber) { $plan += "License $($item.SkuPartNumber)" }
+        if ($item.Groups)        { $plan += "Groups: $($item.Groups.Name -join ', ')" }
+        if ($item.ManagerUpn)    { $plan += "Manager $($item.ManagerUpn)" }
+
+        if (-not $PSCmdlet.ShouldProcess($target, ($plan -join ' | '))) {
+            Add-Result -UserPrincipalName $target -Status 'WhatIf' -Actions $plan -Message 'Pre-flight passed; no changes made.'
+            continue
+        }
+
+        $password  = New-RandomPassword -Length $PasswordLength
+        $completed = [System.Collections.Generic.List[string]]::new()
+
+        $body = @{
+            AccountEnabled    = $true
+            DisplayName       = Get-PropertyValue -InputObject $item.Row -Name 'DisplayName'
+            UserPrincipalName = $item.Upn
+            MailNickname      = $item.MailNickname
+            PasswordProfile   = @{
+                Password                             = $password
+                ForceChangePasswordNextSignIn        = $true
+                ForceChangePasswordNextSignInWithMfa = $false
+            }
+        }
+
+        # Optional attributes, added only when the CSV supplies a value.
+        $optional = @{
+            GivenName      = 'GivenName'
+            Surname        = 'Surname'
+            JobTitle       = 'JobTitle'
+            Department     = 'Department'
+            OfficeLocation = 'OfficeLocation'
+            MobilePhone    = 'MobilePhone'
+            CompanyName    = 'CompanyName'
+            City           = 'City'
+            Country        = 'Country'
+        }
+        foreach ($property in $optional.GetEnumerator()) {
+            $value = Get-PropertyValue -InputObject $item.Row -Name $property.Value
+            if ($value) { $body[$property.Key] = $value }
+        }
+        if ($item.UsageLocation) { $body['UsageLocation'] = $item.UsageLocation.ToUpperInvariant() }
+
+        try {
+            $user = New-MgUser -BodyParameter $body -ErrorAction Stop
+            $completed.Add('Created account')
+            Write-Verbose "Created '$($user.UserPrincipalName)' ($($user.Id))."
+        }
+        catch {
+            Add-Result -UserPrincipalName $target -Status 'Failed' -Message "Account creation failed: $($_.Exception.Message)"
+            continue
+        }
+
+        Add-Result -UserPrincipalName $target -Status 'Created' -Actions $completed
+    }
 }
 
 end {
