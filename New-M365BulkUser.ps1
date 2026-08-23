@@ -226,6 +226,28 @@ begin {
             $false
         }
     }
+
+    # --- Connect -----------------------------------------------------------
+    $connectSplat = @{
+        Scopes    = @('User.ReadWrite.All', 'GroupMember.ReadWrite.All', 'Organization.Read.All', 'Directory.Read.All')
+        NoWelcome = $true
+    }
+    if ($PSBoundParameters.ContainsKey('TenantId')) { $connectSplat['TenantId'] = $TenantId }
+
+    Write-Verbose 'Signing in to Microsoft Graph...'
+    Connect-MgGraph @connectSplat
+
+    $context = Get-MgContext
+    Write-Verbose "Connected as '$($context.Account)' to tenant '$($context.TenantId)'."
+
+    if (-not $SkipDomainCheck) {
+        $script:VerifiedDomains = @(
+            Get-MgDomain -All |
+                Where-Object IsVerified |
+                Select-Object -ExpandProperty Id
+        )
+        Write-Verbose "Verified domains: $($script:VerifiedDomains -join ', ')"
+    }
 }
 
 process {
