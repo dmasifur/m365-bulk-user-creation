@@ -227,6 +227,28 @@ begin {
         }
     }
 
+    function Invoke-GraphWithRetry {
+        <# Retries a Graph call on throttling (429) and transient 5xx responses. #>
+        param(
+            [Parameter(Mandatory)][scriptblock]$ScriptBlock,
+            [int]$MaxAttempts = 4
+        )
+
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            try {
+                return & $ScriptBlock
+            }
+            catch {
+                $status = $_.Exception.Response.StatusCode.value__
+                if ($attempt -eq $MaxAttempts -or $status -notin 429, 502, 503, 504) { throw }
+
+                $delay = [math]::Pow(2, $attempt)
+                Write-Verbose "Graph returned $status; retrying in ${delay}s (attempt $attempt of $MaxAttempts)."
+                Start-Sleep -Seconds $delay
+            }
+        }
+    }
+
     function Add-Result {
         param(
             [Parameter(Mandatory)][string]$UserPrincipalName,
@@ -404,7 +426,7 @@ process {
         if ($item.UsageLocation) { $body['UsageLocation'] = $item.UsageLocation.ToUpperInvariant() }
 
         try {
-            $user = New-MgUser -BodyParameter $body -ErrorAction Stop
+            $user = Invoke-GraphWithRetry { New-MgUser -BodyParameter $body -ErrorAction Stop }
             $completed.Add('Created account')
             Write-Verbose "Created '$($user.UserPrincipalName)' ($($user.Id))."
         }
@@ -415,10 +437,12 @@ process {
 
         if ($item.SkuId) {
             try {
-                $null = Set-MgUserLicense -UserId $user.Id `
-                    -AddLicenses @(@{ SkuId = $item.SkuId }) `
-                    -RemoveLicenses @() `
-                    -ErrorAction Stop
+                $null = Invoke-GraphWithRetry {
+                    Set-MgUserLicense -UserId $user.Id `
+                        -AddLicenses @(@{ SkuId = $item.SkuId }) `
+                        -RemoveLicenses @() `
+                        -ErrorAction Stop
+                }
                 $completed.Add("Licensed $($item.SkuPartNumber)")
             }
             catch {
@@ -428,7 +452,9 @@ process {
 
         foreach ($group in $item.Groups) {
             try {
-                New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction Stop
+                Invoke-GraphWithRetry {
+                    New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction Stop
+                }
                 $completed.Add("Added to '$($group.Name)'")
             }
             catch {
@@ -438,9 +464,11 @@ process {
 
         if ($item.ManagerId) {
             try {
-                Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{
-                    '@odata.id' = "https://graph.microsoft.com/v1.0/users/$($item.ManagerId)"
-                } -ErrorAction Stop
+                Invoke-GraphWithRetry {
+                    Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{
+                        '@odata.id' = "https://graph.microsoft.com/v1.0/users/$($item.ManagerId)"
+                    } -ErrorAction Stop
+                }
                 $completed.Add("Manager set to $($item.ManagerUpn)")
             }
             catch {
