@@ -315,7 +315,7 @@ process {
 
         $missing = $script:RequiredColumns.Where({ -not (Get-PropertyValue -InputObject $row -Name $_) })
         if ($missing) {
-            Add-Result -UserPrincipalName $label -Status 'Failed' -Message "Missing required value(s): $($missing -join ', ')."
+            $null = Add-Result -UserPrincipalName $label -Status 'Failed' -Message "Missing required value(s): $($missing -join ', ')."
             continue
         }
 
@@ -332,7 +332,7 @@ process {
             }
 
             if (Test-UserExists -UserPrincipalName $upn) {
-                Add-Result -UserPrincipalName $upn -Status 'Skipped' -Message 'Account already exists.'
+                $null = Add-Result -UserPrincipalName $upn -Status 'Skipped' -Message 'Account already exists.'
                 continue
             }
 
@@ -373,7 +373,7 @@ process {
             })
         }
         catch {
-            Add-Result -UserPrincipalName $label -Status 'Failed' -Message $_.Exception.Message
+            $null = Add-Result -UserPrincipalName $label -Status 'Failed' -Message $_.Exception.Message
         }
     }
 
@@ -388,7 +388,7 @@ process {
         if ($item.ManagerUpn)    { $plan += "Manager $($item.ManagerUpn)" }
 
         if (-not $PSCmdlet.ShouldProcess($target, ($plan -join ' | '))) {
-            Add-Result -UserPrincipalName $target -Status 'WhatIf' -Actions $plan -Message 'Pre-flight passed; no changes made.'
+            $null = Add-Result -UserPrincipalName $target -Status 'WhatIf' -Actions $plan -Message 'Pre-flight passed; no changes made.'
             continue
         }
 
@@ -432,7 +432,7 @@ process {
             Write-Verbose "Created '$($user.UserPrincipalName)' ($($user.Id))."
         }
         catch {
-            Add-Result -UserPrincipalName $target -Status 'Failed' -Message "Account creation failed: $($_.Exception.Message)"
+            $null = Add-Result -UserPrincipalName $target -Status 'Failed' -Message "Account creation failed: $($_.Exception.Message)"
             continue
         }
 
@@ -453,7 +453,7 @@ process {
 
         foreach ($group in $item.Groups) {
             try {
-                Invoke-GraphWithRetry {
+                $null = Invoke-GraphWithRetry {
                     New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction Stop
                 }
                 $completed.Add("Added to '$($group.Name)'")
@@ -465,7 +465,7 @@ process {
 
         if ($item.ManagerId) {
             try {
-                Invoke-GraphWithRetry {
+                $null = Invoke-GraphWithRetry {
                     Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{
                         '@odata.id' = "https://graph.microsoft.com/v1.0/users/$($item.ManagerId)"
                     } -ErrorAction Stop
