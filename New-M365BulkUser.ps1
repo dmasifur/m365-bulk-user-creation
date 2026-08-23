@@ -1,6 +1,7 @@
 #Requires -Version 7.2
 #Requires -Modules @{ ModuleName='Microsoft.Graph.Authentication'; ModuleVersion='2.15.0' }
 #Requires -Modules @{ ModuleName='Microsoft.Graph.Users'; ModuleVersion='2.15.0' }
+#Requires -Modules @{ ModuleName='Microsoft.Graph.Users.Actions'; ModuleVersion='2.15.0' }
 #Requires -Modules @{ ModuleName='Microsoft.Graph.Groups'; ModuleVersion='2.15.0' }
 #Requires -Modules @{ ModuleName='Microsoft.Graph.Identity.DirectoryManagement'; ModuleVersion='2.15.0' }
 
